@@ -1,0 +1,144 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"></head><body><title>Cup Heroes Clon</title>
+<style>
+/* Una sola apariencia oscura, como la carga del juego: el lienzo vertical centrado y una portada con el botón Jugar. */
+:root {
+  --fondo: #160f22;
+  --fondo-2: #241a35;
+  --texto: #f7efe2;
+  --apagado: #b6a8c9;
+  --oro: #ffc93c;
+  --oro-osc: #d9952a;
+  --magenta: #e2238f;
+  --letra: "Baloo 2", "Trebuchet MS", system-ui, sans-serif;
+  --cuerpo: "Nunito", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+[hidden] { display: none !important; }
+html, body { height: 100%; }
+body { margin: 0; background: radial-gradient(120% 90% at 50% 0%, var(--fondo-2), var(--fondo)); color: var(--texto); font-family: var(--cuerpo); overflow: hidden; }
+#marco { position: fixed; inset: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px) 0; display: flex; align-items: center; justify-content: center; }
+#canvas {
+  display: block;
+  width: min(100vw, calc(100vh * 9 / 16)) !important;
+  height: min(100vh, calc(100vw * 16 / 9)) !important;
+  touch-action: none; outline: none; background: #000;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 20px 60px rgba(0, 0, 0, .55);
+}
+#portada {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px;
+  background: rgba(14, 9, 22, .86); backdrop-filter: blur(3px);
+}
+.tarjeta { width: min(100%, 420px); text-align: center; display: grid; gap: 14px; }
+.marca { font-family: var(--letra); font-weight: 800; font-size: clamp(34px, 9vw, 52px); line-height: 1; letter-spacing: .5px; color: var(--oro); text-shadow: 0 3px 0 var(--oro-osc), 0 6px 18px rgba(0, 0, 0, .5); margin: 0; }
+.sub { color: var(--apagado); margin: 0; font-size: 15px; line-height: 1.5; }
+#jugar {
+  justify-self: center; font-family: var(--letra); font-weight: 800; font-size: 26px; letter-spacing: 1px;
+  color: #3b2300; background: linear-gradient(#ffe066, var(--oro)); border: 0; border-radius: 18px; padding: 12px 48px;
+  box-shadow: 0 5px 0 var(--oro-osc), 0 10px 24px rgba(0, 0, 0, .4); cursor: pointer;
+}
+#jugar:active { transform: translateY(3px); box-shadow: 0 2px 0 var(--oro-osc); }
+#jugar:focus-visible { outline: 3px solid var(--texto); outline-offset: 4px; }
+#jugar:disabled { filter: grayscale(.4) brightness(.85); cursor: progress; }
+.barra { height: 10px; border-radius: 6px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+#relleno { height: 100%; width: 0; background: linear-gradient(90deg, var(--magenta), var(--oro)); transition: width .15s linear; }
+#estado { margin: 0; min-height: 1.4em; font-size: 14px; color: var(--apagado); font-variant-numeric: tabular-nums; }
+.notas { margin: 0; font-size: 12.5px; color: var(--apagado); line-height: 1.55; text-align: left; background: rgba(255, 255, 255, .04); border-radius: 12px; padding: 10px 12px; }
+.notas b { color: var(--texto); font-weight: 700; }
+@media (prefers-reduced-motion: reduce) { #relleno { transition: none; } }
+</style>
+
+<div id="marco"><canvas id="canvas" tabindex="0" aria-label="Juego Cup Heroes (clon)"></canvas></div>
+
+<div id="portada">
+  <div class="tarjeta">
+    <p class="marca">CUP HEROES</p>
+    <p class="sub">Clon jugable hecho en Godot a partir del original, para uso interno. Se juega con el ratón o con el dedo.</p>
+    <button id="jugar" type="button">JUGAR</button>
+    <div class="barra" aria-hidden="true"><div id="relleno"></div></div>
+    <p id="estado" role="status">Descarga de unos 25 MB la primera vez.</p>
+    <p class="notas"><b>Cómo se juega:</b> la primera partida empieza con la historia (toca para avanzar el diálogo). En el tablero, toca donde quieras soltar las bolas. Entre olas, elige cartas. Al terminar el capítulo vuelves al menú y LUCHA te lleva al siguiente.<br><b>Simulado:</b> anuncios, compras, gremio y correo funcionan en local, sin pagos reales. El progreso se guarda solo en este navegador.</p>
+  </div>
+</div>
+
+<script>
+// Los archivos grandes del juego se publican comprimidos con gzip (y el paquete, en dos trozos) por el límite de
+// tamaño por archivo; llevan extensión .wasm solo para que el alojamiento los sirva. Este intermediario los descarga, los une, los descomprime en el navegador y se los entrega a
+// Godot como si fueran los originales.
+(function () {
+  const PARTES = {
+    "index.wasm": { archivos: ["motor.gz.wasm"], tipo: "application/wasm" },
+    "index.pck": { archivos: ["datos1.gz.wasm", "datos2.gz.wasm"], tipo: "application/octet-stream" }
+  };
+  const TOTAL_COMPRIMIDO = 10084297 + 15201777;
+  let descargado = 0;
+  const relleno = document.getElementById("relleno");
+  const estado = document.getElementById("estado");
+  const fetchOriginal = window.fetch.bind(window);
+
+  async function descargar(nombre) {
+    const r = await fetchOriginal(nombre);
+    if (!r.ok) throw new Error("No se pudo descargar " + nombre + " (" + r.status + ")");
+    const lector = r.body.getReader();
+    const trozos = [];
+    for (;;) {
+      const { done, value } = await lector.read();
+      if (done) break;
+      trozos.push(value);
+      descargado += value.byteLength;
+      const p = Math.min(1, descargado / TOTAL_COMPRIMIDO);
+      relleno.style.width = (p * 100).toFixed(1) + "%";
+      estado.textContent = "Descargando… " + Math.round(p * 100) + " %";
+    }
+    return new Blob(trozos);
+  }
+
+  window.fetch = async function (url, init) {
+    const nombre = String(url instanceof Request ? url.url : url).split("/").pop().split("?")[0];
+    const parte = PARTES[nombre];
+    if (!parte) return fetchOriginal(url, init);
+    const blobs = [];
+    for (const a of parte.archivos) blobs.push(await descargar(a));
+    const flujo = new Blob(blobs).stream().pipeThrough(new DecompressionStream("gzip"));
+    const datos = await new Response(flujo).arrayBuffer();
+    return new Response(datos, { status: 200, headers: { "Content-Type": parte.tipo, "Content-Length": String(datos.byteLength) } });
+  };
+})();
+</script>
+<script src="index.js"></script>
+<script>
+(function () {
+  const GODOT_CONFIG = {"args":[],"canvasResizePolicy":1,"emscriptenPoolSize":8,"ensureCrossOriginIsolationHeaders":false,"executable":"index","experimentalVK":false,"fileSizes":{"index.pck":18071400,"index.wasm":39514754},"focusCanvas":true,"gdextensionLibs":[],"godotPoolSize":4};
+  const portada = document.getElementById("portada");
+  const boton = document.getElementById("jugar");
+  const estado = document.getElementById("estado");
+  const relleno = document.getElementById("relleno");
+  const canvas = document.getElementById("canvas");
+
+  const faltan = Engine.getMissingFeatures({ threads: false });
+  if (faltan.length) {
+    boton.disabled = true;
+    estado.textContent = "Este navegador no puede ejecutar el juego: " + faltan.join(", ") + ". Prueba con Chrome, Edge o Firefox actualizados.";
+    return;
+  }
+  const engine = new Engine(GODOT_CONFIG);
+
+  boton.addEventListener("click", function () {
+    boton.disabled = true;
+    estado.textContent = "Preparando…";
+    engine.startGame({
+      onProgress: function (actual, total) {
+        if (total > 0 && actual >= total) estado.textContent = "Arrancando…";
+      }
+    }).then(function () {
+      relleno.style.width = "100%";
+      portada.hidden = true;
+      canvas.focus();
+    }, function (err) {
+      console.error(err);
+      boton.disabled = false;
+      estado.textContent = "No se pudo iniciar el juego: " + (err && err.message ? err.message : String(err)) + ". Recarga la página para reintentarlo.";
+    });
+  });
+})();
+</script>
+</body></html>
